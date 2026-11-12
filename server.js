@@ -1,4 +1,26 @@
 
+// require('dotenv').config();
+
+// const express = require('express');
+// const cors = require('cors');
+// const db = require('./db');
+
+// const app = express();
+
+// // ==========================================
+// // MIDDLEWARE
+// // ==========================================
+
+// app.use(cors());
+
+
+// app.use(express.json({ limit: '50mb' }));
+
+// app.use(express.urlencoded({
+//     limit: '50mb',
+//     extended: true
+// }));
+
 require('dotenv').config();
 
 const express = require('express');
@@ -11,8 +33,16 @@ const app = express();
 // MIDDLEWARE
 // ==========================================
 
-app.use(cors());
+const allowedOrigins = [
+    'http://localhost:5173',
+    process.env.FRONTEND_URL
+].filter(Boolean);
 
+app.use(cors({
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: true
+}));
 
 app.use(express.json({ limit: '50mb' }));
 
@@ -20,6 +50,45 @@ app.use(express.urlencoded({
     limit: '50mb',
     extended: true
 }));
+
+// ==========================================
+// API HEALTH CHECK
+// ==========================================
+
+app.get('/', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Jewellery Store API is running!',
+        environment: process.env.NODE_ENV || 'production'
+    });
+});
+
+// ==========================================
+// DATABASE CONNECTION CHECK
+// ==========================================
+
+app.get('/api/db-test', async (req, res) => {
+    try {
+        const [result] = await db.execute(
+            'SELECT 1 AS connected'
+        );
+
+        res.status(200).json({
+            success: true,
+            message: 'Database connected successfully!',
+            data: result
+        });
+
+    } catch (error) {
+        console.error('DATABASE CONNECTION ERROR:', error.message);
+
+        res.status(500).json({
+            success: false,
+            message: 'Database connection failed.'
+        });
+    }
+});
+
 
 // ==========================================
 // CUSTOMER ORDERS
@@ -768,11 +837,41 @@ app.get("/api/newsletter", async (req, res) => {
 // SERVER START
 // ==========================================
 
+// const PORT = process.env.PORT || 5000;
+
+// app.listen(PORT, () => {
+//     console.log(`Server running on http://localhost:${PORT}`);
+// });
+
+
+app.use((err, req, res, next) => {
+    console.error('SERVER ERROR:', err);
+
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    res.status(500).json({
+        success: false,
+        message: 'Internal server error.'
+    });
+});
+
+// ==========================================
+// LOCAL DEVELOPMENT + VERCEL EXPORT
+// ==========================================
+
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+// Run locally only
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+// Vercel will use this Express application
+module.exports = app;
 
 // const PORT = process.env.PORT || 5000;
 
