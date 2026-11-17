@@ -13,7 +13,7 @@ async function getPool() {
             password: process.env.ORACLE_PASSWORD,
             connectString: process.env.ORACLE_CONNECT_STRING,
             poolMin: 0,
-            poolMax: 2,
+            poolMax: 5,
             poolIncrement: 1
         }).catch(error => {
             poolPromise = null;
@@ -24,7 +24,7 @@ async function getPool() {
     return poolPromise;
 }
 
-async function query(sql, binds = {}) {
+async function execute(sql, binds = {}) {
     const pool = await getPool();
     const connection = await pool.getConnection();
 
@@ -38,4 +38,7 @@ async function query(sql, binds = {}) {
     }
 }
 
-module.exports = { query };
+module.exports = {
+    execute,
+    getPool
+};
