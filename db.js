@@ -1,44 +1,12 @@
+const mysql = require('mysql2');
 
-const oracledb = require('oracledb');
+const db = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+});
 
-oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
-oracledb.fetchAsString = [oracledb.CLOB];
-
-let poolPromise;
-
-async function getPool() {
-    if (!poolPromise) {
-        poolPromise = oracledb.createPool({
-            user: process.env.ORACLE_USER,
-            password: process.env.ORACLE_PASSWORD,
-            connectString: process.env.ORACLE_CONNECT_STRING,
-            poolMin: 0,
-            poolMax: 5,
-            poolIncrement: 1
-        }).catch(error => {
-            poolPromise = null;
-            throw error;
-        });
-    }
-
-    return poolPromise;
-}
-
-async function execute(sql, binds = {}) {
-    const pool = await getPool();
-    const connection = await pool.getConnection();
-
-    try {
-        return await connection.execute(sql, binds, {
-            autoCommit: true,
-            outFormat: oracledb.OUT_FORMAT_OBJECT
-        });
-    } finally {
-        await connection.close();
-    }
-}
-
-module.exports = {
-    execute,
-    getPool
-};
+module.exports = db.promise();

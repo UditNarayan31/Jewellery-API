@@ -3,7 +3,6 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const oracledb = require('oracledb');
 const db = require('./db');
 
 const app = express();
@@ -12,59 +11,15 @@ const app = express();
 // MIDDLEWARE
 // ==========================================
 
-const allowedOrigins = [
-    'https://siddiqui-jewellers.web.app',
-    'https://jewellers-admin-panel.web.app'
-];
+app.use(cors());
 
-app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            return callback(null, true);
-        }
-
-        return callback(new Error('Not allowed by CORS'));
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
 
 app.use(express.json({ limit: '50mb' }));
+
 app.use(express.urlencoded({
     limit: '50mb',
     extended: true
 }));
-
-// ==========================================
-// COMMON ERROR HANDLER
-// ==========================================
-
-function handleError(res, error, operation) {
-    console.error(operation, error);
-
-    if (error.errorNum === 1) {
-        return res.status(409).json({
-            success: false,
-            message: 'This record already exists.'
-        });
-    }
-
-    return res.status(500).json({
-        success: false,
-        message: error.message || 'Database error.'
-    });
-}
-
-// ==========================================
-// HEALTH CHECK
-// ==========================================
-
-app.get('/', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Oracle production API is running.'
-    });
-});
 
 // ==========================================
 // CUSTOMER ORDERS
@@ -73,6 +28,8 @@ app.get('/', (req, res) => {
 
 app.post('/api/customer-orders', async (req, res) => {
     try {
+        console.log('Received Order:', req.body);
+
         const {
             orderId,
             firstName,
@@ -142,113 +99,107 @@ app.post('/api/customer-orders', async (req, res) => {
                 products,
                 total_price
             )
-            VALUES (
-                :orderId,
-                :firstName,
-                :lastName,
-                :email,
-                :phone,
-                :address,
-                :city,
-                :state,
-                :pincode,
-                :paymentMethod,
-                :products,
-                :totalPrice
-            )
-            RETURNING id INTO :outId
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        const result = await db.execute(sql, {
+        const [result] = await db.execute(sql, [
             orderId,
             firstName,
-            lastName: lastName || null,
+            lastName || null,
             email,
-            phone: phone || null,
-            address: address || null,
-            city: city || null,
-            state: state || null,
-            pincode: pincode || null,
-            paymentMethod: payment_method || null,
-            products: JSON.stringify(products),
-            totalPrice: Number(total_price),
-            outId: {
-                dir: oracledb.BIND_OUT,
-                type: oracledb.NUMBER
-            }
-        });
+            phone || null,
+            address || null,
+            city || null,
+            state || null,
+            pincode || null,
+            payment_method || null,
+            JSON.stringify(products),
+            Number(total_price)
+        ]);
 
         return res.status(201).json({
             success: true,
             message: 'Customer order saved successfully!',
             data: {
-                id: result.outBinds.outId[0],
+                id: result.insertId,
                 orderId
             }
         });
 
     } catch (error) {
-        if (error.errorNum === 1) {
+        console.error('POST ORDER ERROR:', error);
+
+        if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({
                 success: false,
                 message: 'This Order ID already exists.'
             });
         }
 
-        return handleError(res, error, 'POST ORDER ERROR');
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
 
+
 // ==========================================
 // CUSTOMER ORDERS
-// GET - Fetch All Orders
+// GET - Fetch All Customer Orders
 // ==========================================
 
 app.get('/api/customer-orders', async (req, res) => {
     try {
         const sql = `
             SELECT
-                id AS "id",
-                order_id AS "order_id",
-                first_name AS "first_name",
-                last_name AS "last_name",
-                email AS "email",
-                phone AS "phone",
-                address AS "address",
-                city AS "city",
-                state AS "state",
-                pincode AS "pincode",
-                payment_method AS "payment_method",
-                products AS "products",
-                total_price AS "total_price",
-                order_status AS "order_status",
-                created_at AS "created_at"
+                id,
+                order_id,
+                first_name,
+                last_name,
+                email,
+                phone,
+                address,
+                city,
+                state,
+                pincode,
+                payment_method,
+                products,
+                total_price,
+                order_status,
+                created_at
             FROM customer_orders
             ORDER BY id DESC
         `;
 
-        const result = await db.execute(sql);
+        const [orders] = await db.execute(sql);
 
         return res.status(200).json({
             success: true,
             message: 'Orders fetched successfully!',
-            total: result.rows.length,
-            data: result.rows
+            total: orders.length,
+            data: orders
         });
 
     } catch (error) {
-        return handleError(res, error, 'GET ORDERS ERROR');
+        console.error('GET ORDERS ERROR:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
 
+
 // ==========================================
 // CUSTOMER ORDERS
-// PUT - Update Order Status
+// PUT - Update Customer Order Status
 // ==========================================
 
 app.put('/api/customer-orders/:id/status', async (req, res) => {
     try {
-        const id = Number(req.params.id);
+        const { id } = req.params;
         const { order_status } = req.body;
 
         const allowedStatuses = [
@@ -259,7 +210,7 @@ app.put('/api/customer-orders/:id/status', async (req, res) => {
             'Cancelled'
         ];
 
-        if (!Number.isInteger(id) || id <= 0) {
+        if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid order ID.'
@@ -273,35 +224,50 @@ app.put('/api/customer-orders/:id/status', async (req, res) => {
             });
         }
 
-        const result = await db.execute(`
+        const sql = `
             UPDATE customer_orders
-            SET order_status = :status
-            WHERE id = :id
-        `, {
-            status: order_status,
-            id
-        });
+            SET order_status = ?
+            WHERE id = ?
+        `;
 
-        if (result.rowsAffected === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Order not found.'
-            });
+        const [result] = await db.execute(sql, [
+            order_status,
+            Number(id)
+        ]);
+
+        if (result.affectedRows === 0) {
+            const [existingOrder] = await db.execute(
+                'SELECT id FROM customer_orders WHERE id = ?',
+                [Number(id)]
+            );
+
+            if (existingOrder.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Order not found.'
+                });
+            }
         }
 
         return res.status(200).json({
             success: true,
             message: 'Order status updated successfully!',
             data: {
-                id,
+                id: Number(id),
                 order_status
             }
         });
 
     } catch (error) {
-        return handleError(res, error, 'UPDATE ORDER STATUS ERROR');
+        console.error('UPDATE ORDER STATUS ERROR:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
+
 
 // ==========================================
 // PRODUCT INVENTORY
@@ -310,6 +276,8 @@ app.put('/api/customer-orders/:id/status', async (req, res) => {
 
 app.post('/api/product-inventory', async (req, res) => {
     try {
+        console.log('Received Product:', req.body);
+
         const {
             productId,
             stoneName,
@@ -328,6 +296,8 @@ app.post('/api/product-inventory', async (req, res) => {
             images
         } = req.body;
 
+        // Required field validation
+
         if (
             !productId ||
             !stoneName ||
@@ -343,6 +313,8 @@ app.post('/api/product-inventory', async (req, res) => {
                 message: 'Product ID, stone name, price, category, report number and valid weight are required.'
             });
         }
+
+        // Image validation
 
         if (
             !Array.isArray(images) ||
@@ -373,53 +345,34 @@ app.post('/api/product-inventory', async (req, res) => {
                 comments,
                 images
             )
-            VALUES (
-                :productId,
-                :stoneName,
-                :price,
-                :category,
-                :reportNo,
-                :weight,
-                :shapeCut,
-                :dimension,
-                :color,
-                :refractiveIndex,
-                :specificGravity,
-                :speciesGroup,
-                :hardness,
-                :comments,
-                :images
-            )
-            RETURNING id INTO :outId
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        const result = await db.execute(sql, {
+        const values = [
             productId,
-            stoneName: stoneName.trim(),
-            price: Number(price),
-            category: category.trim(),
-            reportNo: reportNo.trim(),
-            weight: Number(weight),
-            shapeCut: shapeCut || null,
-            dimension: dimension || null,
-            color: color || null,
-            refractiveIndex: refractiveIndex || null,
-            specificGravity: specificGravity || null,
-            speciesGroup: speciesGroup || null,
-            hardness: hardness || null,
-            comments: comments || null,
-            images: JSON.stringify(images),
-            outId: {
-                dir: oracledb.BIND_OUT,
-                type: oracledb.NUMBER
-            }
-        });
+            stoneName.trim(),
+            Number(price),
+            category.trim(),
+            reportNo.trim(),
+            Number(weight),
+            shapeCut || null,
+            dimension || null,
+            color || null,
+            refractiveIndex || null,
+            specificGravity || null,
+            speciesGroup || null,
+            hardness || null,
+            comments || null,
+            JSON.stringify(images)
+        ];
+
+        const [result] = await db.execute(sql, values);
 
         return res.status(201).json({
             success: true,
             message: 'Product saved successfully!',
             data: {
-                id: result.outBinds.outId[0],
+                id: result.insertId,
                 productId,
                 stoneName,
                 price,
@@ -429,16 +382,22 @@ app.post('/api/product-inventory', async (req, res) => {
         });
 
     } catch (error) {
-        if (error.errorNum === 1) {
+        console.error('ADD PRODUCT ERROR:', error);
+
+        if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({
                 success: false,
                 message: 'This Product ID or Report Number already exists.'
             });
         }
 
-        return handleError(res, error, 'ADD PRODUCT ERROR');
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
+
 
 // ==========================================
 // PRODUCT INVENTORY
@@ -449,35 +408,40 @@ app.get('/api/product-inventory', async (req, res) => {
     try {
         const sql = `
             SELECT
-                id AS "id",
-                product_id AS "product_id",
-                stone_name AS "stone_name",
-                price AS "price",
-                category AS "category",
-                report_no AS "report_no",
-                weight AS "weight",
-                shape_cut AS "shape_cut",
-                dimension AS "dimension",
-                color AS "color",
-                refractive_index AS "refractive_index",
-                specific_gravity AS "specific_gravity",
-                species_group AS "species_group",
-                hardness AS "hardness",
-                comments AS "comments",
-                images AS "images"
+                id,
+                product_id,
+                stone_name,
+                price,
+                category,
+                report_no,
+                weight,
+                shape_cut,
+                dimension,
+                color,
+                refractive_index,
+                specific_gravity,
+                species_group,
+                hardness,
+                comments,
+                images
             FROM jewellery_products
             ORDER BY id DESC
         `;
 
-        const result = await db.execute(sql);
+        const [products] = await db.execute(sql);
 
-        const formattedProducts = result.rows.map(product => {
+        const formattedProducts = products.map(product => {
             let productImages = product.images;
 
             if (typeof productImages === 'string') {
                 try {
                     productImages = JSON.parse(productImages);
                 } catch (error) {
+                    console.error(
+                        'IMAGE JSON PARSE ERROR:',
+                        error
+                    );
+
                     productImages = [];
                 }
             }
@@ -514,9 +478,15 @@ app.get('/api/product-inventory', async (req, res) => {
         });
 
     } catch (error) {
-        return handleError(res, error, 'GET PRODUCTS ERROR');
+        console.error('GET PRODUCTS ERROR:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
+
 
 // ==========================================
 // PRODUCT INVENTORY
@@ -544,12 +514,16 @@ app.put('/api/product-inventory/:id', async (req, res) => {
             images
         } = req.body;
 
+        // Validate database ID
+
         if (!Number.isInteger(id) || id <= 0) {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid product ID.'
             });
         }
+
+        // Validate required fields
 
         if (
             !stoneName ||
@@ -569,6 +543,8 @@ app.put('/api/product-inventory/:id', async (req, res) => {
             });
         }
 
+        // Validate images
+
         if (
             !Array.isArray(images) ||
             images.length === 0 ||
@@ -583,65 +559,84 @@ app.put('/api/product-inventory/:id', async (req, res) => {
         const sql = `
             UPDATE jewellery_products
             SET
-                stone_name = :stoneName,
-                price = :price,
-                category = :category,
-                report_no = :reportNo,
-                weight = :weight,
-                shape_cut = :shapeCut,
-                dimension = :dimension,
-                color = :color,
-                refractive_index = :refractiveIndex,
-                specific_gravity = :specificGravity,
-                species_group = :speciesGroup,
-                hardness = :hardness,
-                comments = :comments,
-                images = :images
-            WHERE id = :id
+                stone_name = ?,
+                price = ?,
+                category = ?,
+                report_no = ?,
+                weight = ?,
+                shape_cut = ?,
+                dimension = ?,
+                color = ?,
+                refractive_index = ?,
+                specific_gravity = ?,
+                species_group = ?,
+                hardness = ?,
+                comments = ?,
+                images = ?
+            WHERE id = ?
         `;
 
-        const result = await db.execute(sql, {
-            stoneName: stoneName.trim(),
-            price: Number(price),
-            category: category.trim(),
-            reportNo: reportNo.trim(),
-            weight: Number(weight),
-            shapeCut: shapeCut || null,
-            dimension: dimension || null,
-            color: color || null,
-            refractiveIndex: refractiveIndex || null,
-            specificGravity: specificGravity || null,
-            speciesGroup: speciesGroup || null,
-            hardness: hardness || null,
-            comments: comments || null,
-            images: JSON.stringify(images),
+        const values = [
+            stoneName.trim(),
+            Number(price),
+            category.trim(),
+            reportNo.trim(),
+            Number(weight),
+            shapeCut || null,
+            dimension || null,
+            color || null,
+            refractiveIndex || null,
+            specificGravity || null,
+            speciesGroup || null,
+            hardness || null,
+            comments || null,
+            JSON.stringify(images),
             id
-        });
+        ];
 
-        if (result.rowsAffected === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Product not found.'
-            });
+        const [result] = await db.execute(sql, values);
+
+        // Check if product exists
+
+        if (result.affectedRows === 0) {
+            const [existingProduct] = await db.execute(
+                'SELECT id FROM jewellery_products WHERE id = ?',
+                [id]
+            );
+
+            if (existingProduct.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Product not found.'
+                });
+            }
         }
 
         return res.status(200).json({
             success: true,
             message: 'Product updated successfully!',
-            data: { id }
+            data: {
+                id
+            }
         });
 
     } catch (error) {
-        if (error.errorNum === 1) {
+        console.error('UPDATE PRODUCT ERROR:', error);
+
+        if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({
                 success: false,
                 message: 'This report number already exists.'
             });
         }
 
-        return handleError(res, error, 'UPDATE PRODUCT ERROR');
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
+        });
     }
 });
+
 
 // ==========================================
 // PRODUCT INVENTORY
@@ -659,12 +654,14 @@ app.delete('/api/product-inventory/:id', async (req, res) => {
             });
         }
 
-        const result = await db.execute(`
+        const sql = `
             DELETE FROM jewellery_products
-            WHERE id = :id
-        `, { id });
+            WHERE id = ?
+        `;
 
-        if (result.rowsAffected === 0) {
+        const [result] = await db.execute(sql, [id]);
+
+        if (result.affectedRows === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Product not found.'
@@ -674,111 +671,105 @@ app.delete('/api/product-inventory/:id', async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Product deleted successfully!',
-            data: { id }
+            data: {
+                id
+            }
         });
 
     } catch (error) {
-        return handleError(res, error, 'DELETE PRODUCT ERROR');
-    }
-});
+        console.error('DELETE PRODUCT ERROR:', error);
 
-// ==========================================
-// NEWSLETTER
-// POST - Subscribe
-// ==========================================
-
-app.post('/api/newsletter', async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        if (
-            !email ||
-            typeof email !== 'string' ||
-            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please enter a valid email address.'
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-
-        const existing = await db.execute(`
-            SELECT id AS "id"
-            FROM newsletter_subscribers
-            WHERE email = :email
-        `, { email: normalizedEmail });
-
-        if (existing.rows.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: 'This email is already subscribed!'
-            });
-        }
-
-        await db.execute(`
-            INSERT INTO newsletter_subscribers (email)
-            VALUES (:email)
-        `, { email: normalizedEmail });
-
-        return res.status(201).json({
-            success: true,
-            message: 'Thank you for subscribing!'
+        return res.status(500).json({
+            success: false,
+            message: error.sqlMessage || error.message
         });
-
-    } catch (error) {
-        if (error.errorNum === 1) {
-            return res.status(409).json({
-                success: false,
-                message: 'This email is already subscribed!'
-            });
-        }
-
-        return handleError(res, error, 'NEWSLETTER ERROR');
     }
 });
 
+
 // ==========================================
-// NEWSLETTER
-// GET - Fetch Subscribers
+// POST API - Newsletter Subscription
 // ==========================================
+app.post("/api/newsletter", async (req, res) => {
+  try {
+    const { email } = req.body;
 
-app.get('/api/newsletter', async (req, res) => {
-    try {
-        const result = await db.execute(`
-            SELECT
-                id AS "id",
-                email AS "email",
-                created_at AS "created_at"
-            FROM newsletter_subscribers
-            ORDER BY id DESC
-        `);
-
-        return res.status(200).json({
-            success: true,
-            count: result.rows.length,
-            data: result.rows
-        });
-
-    } catch (error) {
-        return handleError(res, error, 'GET NEWSLETTER ERROR');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address.",
+      });
     }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const [existing] = await db.execute(
+      "SELECT id FROM newsletter_subscribers WHERE email = ?",
+      [normalizedEmail]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already subscribed!",
+      });
+    }
+
+    await db.execute(
+      "INSERT INTO newsletter_subscribers (email) VALUES (?)",
+      [normalizedEmail]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Thank you for subscribing!",
+    });
+  } catch (error) {
+    console.error("NEWSLETTER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to subscribe. Please try again later.",
+    });
+  }
 });
+
+// ==========================================
+// GET API - Fetch Newsletter Subscribers
+// ==========================================
+app.get("/api/newsletter", async (req, res) => {
+  console.log("GET NEWSLETTER API CALLED");
+
+  try {
+    const [subscribers] = await db.execute(
+      `SELECT id, email, created_at
+       FROM newsletter_subscribers
+       ORDER BY id DESC`
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: subscribers.length,
+      data: subscribers,
+    });
+
+  } catch (error) {
+    console.error("GET NEWSLETTER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
 
 // ==========================================
 // SERVER START
 // ==========================================
 
-const PORT = process.env.PORT || 2484;
+const PORT = process.env.PORT || 5000;
 
-// Standalone hosting: start server.
-// Vercel/serverless: export app without app.listen().
-
-if (require.main === module) {
-    app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-    });
-}
-
-module.exports = app;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
