@@ -764,6 +764,23 @@ app.get("/api/newsletter", async (req, res) => {
 });
 
 
+app.get('/api/test-db', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT 1 AS connected');
+
+        res.json({
+            success: true,
+            message: 'Aiven database connected!',
+            data: rows
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
 // ==========================================
 // SERVER START
 // ==========================================
